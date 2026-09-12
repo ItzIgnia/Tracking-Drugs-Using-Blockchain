@@ -25,8 +25,8 @@ contract DrugTracking {
         uint256 quantity;
         uint256 manufacturingDate;
         uint256 expiryDate;
-        uint256 shippingDate;   // Added: automatically recorded when shipped
-        uint256 receivingDate;  // Added: automatically recorded when received
+        uint256 shippingDate;   
+        uint256 receivingDate;  
 
         address manufacturer;
         address currentOwner;
@@ -196,6 +196,36 @@ contract DrugTracking {
         );
     }
 
+
+    function shipToHospital(
+    string memory _drugId,
+    address _hospital
+    ) public {
+        require(drugs[_drugId].exists, "Drug does not exist");
+        require(
+            drugs[_drugId].currentOwner == msg.sender,
+            "Only current owner can ship"
+        );
+        require(
+            drugs[_drugId].status == Status.Received,
+            "Drug must be received before hospital shipment"
+        );
+        require(
+            _hospital != address(0),
+            "Invalid hospital address"
+        );
+
+        drugs[_drugId].currentOwner = _hospital;
+        drugs[_drugId].shippingDate = block.timestamp;
+        drugs[_drugId].status = Status.Shipped;
+
+        emit DrugShipped(
+            _drugId,
+            msg.sender,
+            _hospital,
+            block.timestamp
+        );
+    }
     // -----------------------------
     // Dispense Drug
     // -----------------------------
