@@ -1,7 +1,7 @@
-# Sample Hardhat 3 Project (minimal)
+# Drug Tracking Using Blockchain
 
-This project has a minimal setup of Hardhat 3, without any plugins.
+This is a blockchain Project with Python, Solidity, Hardhat 3, without any plugins.
 
 ## What's included?
 
-The project includes native support for TypeScript, Hardhat scripts, tasks, and support for Solidity compilation and tests.
+The project includes native support for Python, TypeScript, Hardhat scripts, tasks, and support for Solidity compilation and tests.
