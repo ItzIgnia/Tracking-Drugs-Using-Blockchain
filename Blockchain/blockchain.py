@@ -1,256 +1,201 @@
-# ============================================================
-# PHARMACHAIN - BLOCKCHAIN BACKEND
-# ============================================================
-
+import os
 import json
-
 from pathlib import Path
 
-from datetime import (
-    date,
-    datetime
-)
-
+import streamlit as st
 from web3 import Web3
+from dotenv import load_dotenv
 
 
 # ============================================================
-# BLOCKCHAIN CONNECTION
+# LOAD LOCAL .ENV
 # ============================================================
 
-RPC_URL = (
-    "http://127.0.0.1:8545"
-)
-
-w3 = Web3(
-    Web3.HTTPProvider(
-        RPC_URL
-    )
-)
+load_dotenv()
 
 
 # ============================================================
-# PROJECT PATHS
+# HELPER: GET CONFIGURATION
 # ============================================================
 
-BLOCKCHAIN_FOLDER = (
-    Path(__file__).resolve().parent
-)
+def get_config(key):
+    """
+    Get configuration from Streamlit Secrets first.
+    If not available, use environment variables.
+    """
 
-PROJECT_ROOT = (
-    BLOCKCHAIN_FOLDER.parent
-)
+    try:
+        if key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
 
-
-ARTIFACT_PATH = (
-    PROJECT_ROOT
-    / "artifacts"
-    / "contracts"
-    / "DrugTracking.sol"
-    / "DrugTracking.json"
-)
-
-
-ADDRESS_FILE = (
-    BLOCKCHAIN_FOLDER
-    / "contract_address.txt"
-)
+    return os.getenv(key)
 
 
 # ============================================================
-# BLOCKCHAIN CONNECTION CHECK
+# BLOCKCHAIN CONFIGURATION
 # ============================================================
 
-def blockchain_connected():
-
-    return w3.is_connected()
-
-
-if not blockchain_connected():
-
-    raise Exception(
-        "Cannot connect to Hardhat.\n"
-        "Make sure 'npx hardhat node' is running."
-    )
+RPC_URL = get_config("RPC_URL")
+PRIVATE_KEY = get_config("PRIVATE_KEY")
+CONTRACT_ADDRESS = get_config("CONTRACT_ADDRESS")
 
 
 # ============================================================
-# LOAD CONTRACT ARTIFACT
+# VALIDATE CONFIGURATION
 # ============================================================
 
-if not ARTIFACT_PATH.exists():
+if not RPC_URL:
+    raise RuntimeError("RPC_URL is not configured.")
 
-    raise FileNotFoundError(
-        f"Contract artifact not found:\n"
-        f"{ARTIFACT_PATH}\n\n"
-        "Run 'npx hardhat compile' first."
-    )
-
-
-with open(
-    ARTIFACT_PATH,
-    "r"
-) as file:
-
-    artifact = json.load(
-        file
-    )
-
-
-ABI = artifact["abi"]
-
-
-# ============================================================
-# LOAD CONTRACT ADDRESS
-# ============================================================
-
-if not ADDRESS_FILE.exists():
-
-    raise FileNotFoundError(
-        f"Contract address file not found:\n"
-        f"{ADDRESS_FILE}\n\n"
-        "Deploy the smart contract first."
-    )
-
-
-with open(
-    ADDRESS_FILE,
-    "r"
-) as file:
-
-    CONTRACT_ADDRESS = (
-        file.read().strip()
-    )
-
+if not PRIVATE_KEY:
+    raise RuntimeError("PRIVATE_KEY is not configured.")
 
 if not CONTRACT_ADDRESS:
+    raise RuntimeError("CONTRACT_ADDRESS is not configured.")
 
-    raise Exception(
-        "Contract address file is empty."
+
+# ============================================================
+# WEB3 CONNECTION
+# ============================================================
+
+web3 = Web3(Web3.HTTPProvider(RPC_URL))
+
+
+def blockchain_connected():
+    """
+    Check whether Web3 can connect to the blockchain.
+    """
+    try:
+        return web3.is_connected()
+    except Exception:
+        return False
+
+
+# ============================================================
+# CONTRACT ADDRESS
+# ============================================================
+
+CONTRACT_ADDRESS = Web3.to_checksum_address(CONTRACT_ADDRESS)
+
+
+# ============================================================
+# LOAD ABI
+# ============================================================
+
+ABI_PATH = Path(__file__).parent / "DrugTracking.json"
+
+if not ABI_PATH.exists():
+    raise FileNotFoundError(
+        f"Contract ABI not found: {ABI_PATH}"
     )
 
 
-CONTRACT_ADDRESS = (
-    Web3.to_checksum_address(
-        CONTRACT_ADDRESS
-    )
-)
+with open(ABI_PATH, "r", encoding="utf-8") as file:
+    artifact = json.load(file)
+
+
+# The file may either be a Hardhat artifact
+# containing "abi", or an ABI-only JSON file.
+
+if isinstance(artifact, dict) and "abi" in artifact:
+    CONTRACT_ABI = artifact["abi"]
+else:
+    CONTRACT_ABI = artifact
 
 
 # ============================================================
 # CONTRACT INSTANCE
 # ============================================================
 
-contract = w3.eth.contract(
+contract = web3.eth.contract(
     address=CONTRACT_ADDRESS,
-    abi=ABI
+    abi=CONTRACT_ABI
 )
 
 
 # ============================================================
-# HARDHAT ACCOUNTS
+# WALLET
 # ============================================================
 
-accounts = w3.eth.accounts
+account = web3.eth.account.from_key(PRIVATE_KEY)
+
+ACCOUNT_ADDRESS = account.address
 
 
-if len(accounts) < 3:
+# ============================================================
+# TRANSACTION HELPER
+# ============================================================
 
-    raise Exception(
-        "At least 3 Hardhat accounts are required."
+def send_transaction(function_call):
+    """
+    Sign and send a blockchain transaction.
+    """
+
+    nonce = web3.eth.get_transaction_count(
+        ACCOUNT_ADDRESS,
+        "pending"
     )
 
+    transaction = function_call.build_transaction({
+        "from": ACCOUNT_ADDRESS,
+        "nonce": nonce,
+        "chainId": web3.eth.chain_id,
+    })
 
-manufacturer = accounts[0]
+    # Estimate gas
+    transaction["gas"] = web3.eth.estimate_gas(transaction)
 
-distributor = accounts[1]
+    # Ethereum Sepolia uses EIP-1559.
+    latest_block = web3.eth.get_block("latest")
 
-hospital = accounts[2]
+    if latest_block.get("baseFeePerGas") is not None:
 
+        priority_fee = web3.to_wei(1, "gwei")
 
-# ============================================================
-# STATUS
-# ============================================================
+        transaction["maxPriorityFeePerGas"] = priority_fee
 
-STATUS_NAMES = {
+        transaction["maxFeePerGas"] = (
+            latest_block["baseFeePerGas"] * 2
+            + priority_fee
+        )
 
-    0: "MANUFACTURED",
+    else:
+        transaction["gasPrice"] = web3.eth.gas_price
 
-    1: "SHIPPED",
-
-    2: "RECEIVED",
-
-    3: "DISPENSED"
-}
-
-
-def get_status_name(status):
-
-    return STATUS_NAMES.get(
-        int(status),
-        "UNKNOWN"
+    # Sign
+    signed_transaction = web3.eth.account.sign_transaction(
+        transaction,
+        PRIVATE_KEY
     )
 
+    # Send
+    tx_hash = web3.eth.send_raw_transaction(
+        signed_transaction.raw_transaction
+    )
 
-# ============================================================
-# DATE → UNIX TIMESTAMP
-# ============================================================
+    # Wait
+    receipt = web3.eth.wait_for_transaction_receipt(
+        tx_hash
+    )
 
-def convert_to_timestamp(value):
-
-    # datetime
-    if isinstance(
-        value,
-        datetime
-    ):
-
-        return int(
-            value.timestamp()
-        )
-
-    # date
-    if isinstance(
-        value,
-        date
-    ):
-
-        dt = datetime.combine(
-            value,
-            datetime.min.time()
-        )
-
-        return int(
-            dt.timestamp()
-        )
-
-    # already timestamp
-    return int(value)
+    return receipt
 
 
 # ============================================================
-# CHECK DRUG
+# CHECK DRUG EXISTS
 # ============================================================
 
-def blockchain_drug_exists(
-    drug_id
-):
+def blockchain_drug_exists(drug_id):
 
-    return contract.functions.drugExists(
-        drug_id
-    ).call()
+    try:
+        return contract.functions.drugExists(
+            drug_id
+        ).call()
 
-
-# ============================================================
-# GET DRUG
-# ============================================================
-
-def get_drug(
-    drug_id
-):
-
-    return contract.functions.getDrug(
-        drug_id
-    ).call()
+    except Exception:
+        return False
 
 
 # ============================================================
@@ -267,576 +212,32 @@ def manufacture_drug(
     expiry_date
 ):
 
-    manufacturing_timestamp = (
-        convert_to_timestamp(
-            manufacturing_date
-        )
+    function_call = contract.functions.manufactureDrug(
+        drug_id,
+        batch_id,
+        drug_name,
+        manufacturer_name,
+        quantity,
+        manufacturing_date,
+        expiry_date
     )
 
-    expiry_timestamp = (
-        convert_to_timestamp(
-            expiry_date
-        )
-    )
-
-    transaction = (
-        contract.functions.manufactureDrug(
-
-            drug_id,
-
-            batch_id,
-
-            drug_name,
-
-            manufacturer_name,
-
-            int(quantity),
-
-            manufacturing_timestamp,
-
-            expiry_timestamp
-
-        ).transact({
-
-            "from": manufacturer
-
-        })
-    )
-
-    receipt = (
-        w3.eth.wait_for_transaction_receipt(
-            transaction
-        )
-    )
+    receipt = send_transaction(function_call)
 
     return {
-
-        "action":
-            "MANUFACTURE",
-
-        "transaction_hash":
-            receipt[
-                "transactionHash"
-            ].hex(),
-
-        "block_number":
-            receipt[
-                "blockNumber"
-            ],
-
-        "sender":
-            manufacturer,
-
-        "receiver":
-            manufacturer
+        "receipt": receipt,
+        "sender": ACCOUNT_ADDRESS,
+        "transaction_hash": receipt["transactionHash"].hex(),
+        "block_number": receipt["blockNumber"]
     }
 
 
 # ============================================================
-# SHIP TO DISTRIBUTOR
+# GET DRUG
 # ============================================================
 
-def ship_drug(
-    drug_id,
-    receiver_address=None,
-    sender_address=None
-):
+def get_drug(drug_id):
 
-    if receiver_address is None:
-
-        receiver_address = distributor
-
-
-    if sender_address is None:
-
-        sender_address = manufacturer
-
-
-    sender_address = (
-        Web3.to_checksum_address(
-            sender_address
-        )
-    )
-
-    receiver_address = (
-        Web3.to_checksum_address(
-            receiver_address
-        )
-    )
-
-
-    transaction = (
-        contract.functions.shipDrug(
-
-            drug_id,
-
-            receiver_address
-
-        ).transact({
-
-            "from":
-                sender_address
-
-        })
-    )
-
-
-    receipt = (
-        w3.eth.wait_for_transaction_receipt(
-            transaction
-        )
-    )
-
-
-    return {
-
-        "action":
-            "SHIP_TO_DISTRIBUTOR",
-
-        "transaction_hash":
-            receipt[
-                "transactionHash"
-            ].hex(),
-
-        "block_number":
-            receipt[
-                "blockNumber"
-            ],
-
-        "sender":
-            sender_address,
-
-        "receiver":
-            receiver_address
-    }
-
-
-# ============================================================
-# RECEIVE DRUG
-# ============================================================
-
-def receive_drug(
-    drug_id,
-    receiver_address
-):
-
-    receiver_address = (
-        Web3.to_checksum_address(
-            receiver_address
-        )
-    )
-
-
-    transaction = (
-        contract.functions.receiveDrug(
-
-            drug_id
-
-        ).transact({
-
-            "from":
-                receiver_address
-
-        })
-    )
-
-
-    receipt = (
-        w3.eth.wait_for_transaction_receipt(
-            transaction
-        )
-    )
-
-
-    return {
-
-        "action":
-            "RECEIVE",
-
-        "transaction_hash":
-            receipt[
-                "transactionHash"
-            ].hex(),
-
-        "block_number":
-            receipt[
-                "blockNumber"
-            ],
-
-        "sender":
-            receiver_address,
-
-        "receiver":
-            receiver_address
-    }
-
-
-# ============================================================
-# SHIP TO HOSPITAL
-# ============================================================
-
-def ship_to_hospital(
-    drug_id,
-    hospital_address=None,
-    distributor_address=None
-):
-
-    if hospital_address is None:
-
-        hospital_address = hospital
-
-
-    if distributor_address is None:
-
-        distributor_address = distributor
-
-
-    hospital_address = (
-        Web3.to_checksum_address(
-            hospital_address
-        )
-    )
-
-
-    distributor_address = (
-        Web3.to_checksum_address(
-            distributor_address
-        )
-    )
-
-
-    transaction = (
-        contract.functions.shipToHospital(
-
-            drug_id,
-
-            hospital_address
-
-        ).transact({
-
-            "from":
-                distributor_address
-
-        })
-    )
-
-
-    receipt = (
-        w3.eth.wait_for_transaction_receipt(
-            transaction
-        )
-    )
-
-
-    return {
-
-        "action":
-            "SHIP_TO_HOSPITAL",
-
-        "transaction_hash":
-            receipt[
-                "transactionHash"
-            ].hex(),
-
-        "block_number":
-            receipt[
-                "blockNumber"
-            ],
-
-        "sender":
-            distributor_address,
-
-        "receiver":
-            hospital_address
-    }
-
-
-# ============================================================
-# HOSPITAL RECEIVE
-# ============================================================
-
-def hospital_receive_drug(
-    drug_id,
-    hospital_address=None
-):
-
-    if hospital_address is None:
-
-        hospital_address = hospital
-
-
-    hospital_address = (
-        Web3.to_checksum_address(
-            hospital_address
-        )
-    )
-
-
-    transaction = (
-        contract.functions.receiveDrug(
-
-            drug_id
-
-        ).transact({
-
-            "from":
-                hospital_address
-
-        })
-    )
-
-
-    receipt = (
-        w3.eth.wait_for_transaction_receipt(
-            transaction
-        )
-    )
-
-
-    return {
-
-        "action":
-            "HOSPITAL_RECEIVE",
-
-        "transaction_hash":
-            receipt[
-                "transactionHash"
-            ].hex(),
-
-        "block_number":
-            receipt[
-                "blockNumber"
-            ],
-
-        "sender":
-            hospital_address,
-
-        "receiver":
-            hospital_address
-    }
-
-
-# ============================================================
-# DISPENSE DRUG
-# ============================================================
-
-def dispense_drug(
-    drug_id,
-    hospital_address=None
-):
-
-    if hospital_address is None:
-
-        hospital_address = hospital
-
-
-    hospital_address = (
-        Web3.to_checksum_address(
-            hospital_address
-        )
-    )
-
-
-    transaction = (
-        contract.functions.dispenseDrug(
-
-            drug_id
-
-        ).transact({
-
-            "from":
-                hospital_address
-
-        })
-    )
-
-
-    receipt = (
-        w3.eth.wait_for_transaction_receipt(
-            transaction
-        )
-    )
-
-
-    return {
-
-        "action":
-            "DISPENSE_TO_PATIENT",
-
-        "transaction_hash":
-            receipt[
-                "transactionHash"
-            ].hex(),
-
-        "block_number":
-            receipt[
-                "blockNumber"
-            ],
-
-        "sender":
-            hospital_address,
-
-        "receiver":
-            "PATIENT"
-    }
-
-
-# ============================================================
-# DISPLAY DRUG
-# ============================================================
-
-def display_drug(
-    drug_id
-):
-
-    drug = get_drug(
+    return contract.functions.getDrug(
         drug_id
-    )
-
-    print()
-
-    print(
-        "=" * 65
-    )
-
-    print(
-        "                    DRUG RECORD"
-    )
-
-    print(
-        "=" * 65
-    )
-
-    print(
-        "Drug ID             :",
-        drug[0]
-    )
-
-    print(
-        "Batch ID            :",
-        drug[1]
-    )
-
-    print(
-        "Drug Name           :",
-        drug[2]
-    )
-
-    print(
-        "Manufacturer Name   :",
-        drug[3]
-    )
-
-    print(
-        "Quantity            :",
-        drug[4]
-    )
-
-    print(
-        "Manufacturing Date  :",
-        datetime.fromtimestamp(
-            drug[5]
-        )
-    )
-
-    print(
-        "Expiry Date         :",
-        datetime.fromtimestamp(
-            drug[6]
-        )
-    )
-
-    if drug[7] != 0:
-
-        print(
-            "Shipping Date       :",
-            datetime.fromtimestamp(
-                drug[7]
-            )
-        )
-
-    if drug[8] != 0:
-
-        print(
-            "Receiving Date      :",
-            datetime.fromtimestamp(
-                drug[8]
-            )
-        )
-
-    print(
-        "Manufacturer Wallet :",
-        drug[9]
-    )
-
-    print(
-        "Current Owner       :",
-        drug[10]
-    )
-
-    print(
-        "Status              :",
-        get_status_name(
-            drug[11]
-        )
-    )
-
-    print(
-        "Exists              :",
-        drug[12]
-    )
-
-    print(
-        "=" * 65
-    )
-
-
-# ============================================================
-# STARTUP INFORMATION
-# ============================================================
-
-print(
-    "=============================================="
-)
-
-print(
-    "       PHARMACHAIN BLOCKCHAIN BACKEND"
-)
-
-print(
-    "=============================================="
-)
-
-print(
-    "Blockchain Connected :",
-    blockchain_connected()
-)
-
-print(
-    "Chain ID              :",
-    w3.eth.chain_id
-)
-
-print(
-    "Contract Address      :",
-    CONTRACT_ADDRESS
-)
-
-print(
-    "Manufacturer          :",
-    manufacturer
-)
-
-print(
-    "Distributor           :",
-    distributor
-)
-
-print(
-    "Hospital              :",
-    hospital
-)
-
-print(
-    "=============================================="
-)
+    ).call()
