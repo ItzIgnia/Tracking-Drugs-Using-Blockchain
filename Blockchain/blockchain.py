@@ -8,20 +8,24 @@ from dotenv import load_dotenv
 
 
 # ============================================================
-# LOAD LOCAL .ENV
+# LOAD LOCAL ENVIRONMENT VARIABLES
 # ============================================================
 
 load_dotenv()
 
 
 # ============================================================
-# HELPER: GET CONFIGURATION
+# CONFIGURATION HELPER
 # ============================================================
 
 def get_config(key):
     """
     Get configuration from Streamlit Secrets first.
     If not available, use environment variables.
+
+    This allows the same code to work:
+    - Locally using .env
+    - On Streamlit Cloud using Secrets
     """
 
     try:
@@ -39,7 +43,7 @@ def get_config(key):
 
 RPC_URL = get_config("RPC_URL")
 PRIVATE_KEY = get_config("PRIVATE_KEY")
-CONTRACT_ADDRESS = get_config("CONTRACT_ADDRESS")
+CONTRACT_ADDRESS_VALUE = get_config("CONTRACT_ADDRESS")
 
 
 # ============================================================
@@ -47,28 +51,45 @@ CONTRACT_ADDRESS = get_config("CONTRACT_ADDRESS")
 # ============================================================
 
 if not RPC_URL:
-    raise RuntimeError("RPC_URL is not configured.")
+    raise RuntimeError(
+        "RPC_URL is not configured. "
+        "Add it to .env locally or Streamlit Secrets."
+    )
 
 if not PRIVATE_KEY:
-    raise RuntimeError("PRIVATE_KEY is not configured.")
+    raise RuntimeError(
+        "PRIVATE_KEY is not configured. "
+        "Add it to .env locally or Streamlit Secrets."
+    )
 
-if not CONTRACT_ADDRESS:
-    raise RuntimeError("CONTRACT_ADDRESS is not configured.")
+if not CONTRACT_ADDRESS_VALUE:
+    raise RuntimeError(
+        "CONTRACT_ADDRESS is not configured. "
+        "Add it to .env locally or Streamlit Secrets."
+    )
 
 
 # ============================================================
 # WEB3 CONNECTION
 # ============================================================
 
-web3 = Web3(Web3.HTTPProvider(RPC_URL))
+web3 = Web3(
+    Web3.HTTPProvider(RPC_URL)
+)
 
+
+# ============================================================
+# BLOCKCHAIN CONNECTION CHECK
+# ============================================================
 
 def blockchain_connected():
     """
-    Check whether Web3 can connect to the blockchain.
+    Returns True if Web3 is connected to the blockchain.
     """
+
     try:
         return web3.is_connected()
+
     except Exception:
         return False
 
@@ -77,36 +98,53 @@ def blockchain_connected():
 # CONTRACT ADDRESS
 # ============================================================
 
-CONTRACT_ADDRESS = Web3.to_checksum_address(CONTRACT_ADDRESS)
+CONTRACT_ADDRESS = Web3.to_checksum_address(
+    CONTRACT_ADDRESS_VALUE
+)
 
 
 # ============================================================
-# LOAD ABI
+# LOAD CONTRACT ABI
 # ============================================================
 
 ABI_PATH = Path(__file__).parent / "DrugTracking.json"
 
+
 if not ABI_PATH.exists():
+
     raise FileNotFoundError(
-        f"Contract ABI not found: {ABI_PATH}"
+        f"DrugTracking.json was not found at:\n{ABI_PATH}"
     )
 
 
-with open(ABI_PATH, "r", encoding="utf-8") as file:
-    artifact = json.load(file)
+with open(
+    ABI_PATH,
+    "r",
+    encoding="utf-8"
+) as file:
+
+    contract_file = json.load(file)
 
 
-# The file may either be a Hardhat artifact
-# containing "abi", or an ABI-only JSON file.
+# Hardhat artifact contains:
+# {
+#     "abi": [...],
+#     "bytecode": "...",
+#     ...
+# }
 
-if isinstance(artifact, dict) and "abi" in artifact:
-    CONTRACT_ABI = artifact["abi"]
+if isinstance(contract_file, dict) and "abi" in contract_file:
+
+    CONTRACT_ABI = contract_file["abi"]
+
 else:
-    CONTRACT_ABI = artifact
+
+    # Also supports a JSON file containing only the ABI
+    CONTRACT_ABI = contract_file
 
 
 # ============================================================
-# CONTRACT INSTANCE
+# SMART CONTRACT INSTANCE
 # ============================================================
 
 contract = web3.eth.contract(
@@ -119,87 +157,130 @@ contract = web3.eth.contract(
 # WALLET
 # ============================================================
 
-account = web3.eth.account.from_key(PRIVATE_KEY)
+account = web3.eth.account.from_key(
+    PRIVATE_KEY
+)
 
 ACCOUNT_ADDRESS = account.address
 
 
 # ============================================================
-# TRANSACTION HELPER
+# SEND BLOCKCHAIN TRANSACTION
 # ============================================================
 
 def send_transaction(function_call):
     """
-    Sign and send a blockchain transaction.
+    Build, sign and send a blockchain transaction.
+
+    Returns the transaction receipt.
     """
 
+    # Get current nonce
     nonce = web3.eth.get_transaction_count(
         ACCOUNT_ADDRESS,
         "pending"
     )
 
+    # Base transaction
     transaction = function_call.build_transaction({
+
         "from": ACCOUNT_ADDRESS,
+
         "nonce": nonce,
+
         "chainId": web3.eth.chain_id,
     })
 
-    # Estimate gas
-    transaction["gas"] = web3.eth.estimate_gas(transaction)
 
-    # Ethereum Sepolia uses EIP-1559.
-    latest_block = web3.eth.get_block("latest")
+    # Estimate gas
+    transaction["gas"] = web3.eth.estimate_gas(
+        transaction
+    )
+
+
+    # ========================================================
+    # EIP-1559 GAS SETTINGS
+    # ========================================================
+
+    latest_block = web3.eth.get_block(
+        "latest"
+    )
 
     if latest_block.get("baseFeePerGas") is not None:
 
-        priority_fee = web3.to_wei(1, "gwei")
+        priority_fee = web3.to_wei(
+            1,
+            "gwei"
+        )
 
-        transaction["maxPriorityFeePerGas"] = priority_fee
+        transaction[
+            "maxPriorityFeePerGas"
+        ] = priority_fee
 
-        transaction["maxFeePerGas"] = (
+        transaction[
+            "maxFeePerGas"
+        ] = (
             latest_block["baseFeePerGas"] * 2
             + priority_fee
         )
 
     else:
-        transaction["gasPrice"] = web3.eth.gas_price
 
-    # Sign
+        transaction[
+            "gasPrice"
+        ] = web3.eth.gas_price
+
+
+    # ========================================================
+    # SIGN TRANSACTION
+    # ========================================================
+
     signed_transaction = web3.eth.account.sign_transaction(
         transaction,
         PRIVATE_KEY
     )
 
-    # Send
+
+    # ========================================================
+    # SEND TRANSACTION
+    # ========================================================
+
     tx_hash = web3.eth.send_raw_transaction(
         signed_transaction.raw_transaction
     )
 
-    # Wait
+
+    # ========================================================
+    # WAIT FOR CONFIRMATION
+    # ========================================================
+
     receipt = web3.eth.wait_for_transaction_receipt(
         tx_hash
     )
+
 
     return receipt
 
 
 # ============================================================
-# CHECK DRUG EXISTS
+# CHECK WHETHER DRUG EXISTS ON BLOCKCHAIN
 # ============================================================
 
 def blockchain_drug_exists(drug_id):
 
     try:
+
         return contract.functions.drugExists(
             drug_id
         ).call()
 
     except Exception:
+
         return False
 
 
 # ============================================================
-# MANUFACTURE DRUG
+# MANUFACTURE / REGISTER DRUG
 # ============================================================
 
 def manufacture_drug(
@@ -211,29 +292,82 @@ def manufacture_drug(
     manufacturing_date,
     expiry_date
 ):
+    """
+    Register a new drug on the blockchain.
 
-    function_call = contract.functions.manufactureDrug(
-        drug_id,
-        batch_id,
-        drug_name,
-        manufacturer_name,
-        quantity,
-        manufacturing_date,
-        expiry_date
+    Dates are converted to Unix timestamps because
+    the Solidity contract uses uint256 timestamps.
+    """
+
+    # Convert date strings to timestamps
+    from datetime import datetime
+
+    manufacturing_timestamp = int(
+        datetime.strptime(
+            manufacturing_date,
+            "%Y-%m-%d"
+        ).timestamp()
     )
 
-    receipt = send_transaction(function_call)
+    expiry_timestamp = int(
+        datetime.strptime(
+            expiry_date,
+            "%Y-%m-%d"
+        ).timestamp()
+    )
+
+
+    # ========================================================
+    # SMART CONTRACT FUNCTION
+    # ========================================================
+
+    function_call = contract.functions.manufactureDrug(
+
+        drug_id,
+
+        batch_id,
+
+        drug_name,
+
+        manufacturer_name,
+
+        int(quantity),
+
+        manufacturing_timestamp,
+
+        expiry_timestamp
+    )
+
+
+    # ========================================================
+    # SEND TRANSACTION
+    # ========================================================
+
+    receipt = send_transaction(
+        function_call
+    )
+
+
+    # ========================================================
+    # RETURN RESULT
+    # ========================================================
 
     return {
+
         "receipt": receipt,
+
         "sender": ACCOUNT_ADDRESS,
-        "transaction_hash": receipt["transactionHash"].hex(),
-        "block_number": receipt["blockNumber"]
+
+        "transaction_hash":
+            receipt["transactionHash"].hex(),
+
+        "block_number":
+            receipt["blockNumber"]
     }
 
 
 # ============================================================
-# GET DRUG
+# GET DRUG FROM BLOCKCHAIN
 # ============================================================
 
 def get_drug(drug_id):
