@@ -1319,18 +1319,14 @@ elif menu == "Supply Chain":
 
                     st.code(str(e))
 
-
-        # ====================================================
         # STAGE 4
         # HOSPITAL RECEIVES
         # ====================================================
-
         elif (
             status == 1
             and current_owner.lower()
             == hospital.lower()
         ):
-
             st.subheader(
                 "Stage 4 — Hospital Receives Drug"
             )
@@ -1669,12 +1665,10 @@ elif menu == "Verify Drug":
         # ----------------------------------------------------
 
         elif database_exists:
-
             st.warning(
                 "Drug exists in the local database "
                 "but could not be verified on blockchain."
             )
-
             try:
 
                 db_record = db_get_drug(
@@ -1693,28 +1687,18 @@ elif menu == "Verify Drug":
 
                 st.code(str(e))
 
-        # ----------------------------------------------------
-        # DOES NOT EXIST
-        # ----------------------------------------------------
-
         else:
-
             st.error(
                 "Drug not found."
             )
-
             st.write(
                 "No matching drug was found in "
                 "the blockchain or database."
             )
-
-
 # ============================================================
 # FOOTER
 # ============================================================
-
 st.divider()
-
 st.caption(
     "PharmaChain | Blockchain-Based Pharmaceutical "
     "Supply Chain Tracking System"
