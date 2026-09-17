@@ -1,31 +1,23 @@
-# Node modules
-/node_modules
+# Python
+__pycache__/
+*.py[cod]
+*.db
+*.sqlite
+*.sqlite3
+.venv/
+venv/
 
-# Compilation output
-/dist
-
-# pnpm deploy output
-/bundle
-
-# Hardhat Build Artifacts
-/artifacts
-
-# Hardhat compilation (v2) support directory
-/cache
-
-# Typechain output
-/types
-
-# Environment files
+# Secrets
 .env
 .env.*
 !.env.example
+.streamlit/secrets.toml
 
-# Hardhat coverage reports
-/coverage
+# Node / Hardhat
+node_modules/
+artifacts/
+cache/
+types/
 
-# Gas snapshot files
-/.gas-snapshot
-
-# Snapshot cheatcodes output
-/snapshots
+# Jupyter
+.ipynb_checkpoints/

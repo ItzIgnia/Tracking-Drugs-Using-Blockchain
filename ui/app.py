@@ -1,1705 +1,391 @@
-# ============================================================
-# PHARMACHAIN
-# Blockchain-Based Pharmaceutical Supply Chain
-# ============================================================
-
-import sys
-from pathlib import Path
-from datetime import datetime
-
 import streamlit as st
 import qrcode
+
 from io import BytesIO
+from datetime import datetime, date
 
-
-# ============================================================
-# LOAD PROJECT MODULES
-# ============================================================
-
-import sys
-import importlib.util
-from pathlib import Path
-
-
-# ------------------------------------------------------------
-# PROJECT PATH
-# ------------------------------------------------------------
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-DATABASE_FILE = (
-    PROJECT_ROOT
-    / "database"
-    / "database.py"
+from database import (
+    create_database,
+    drug_exists,
+    add_drug,
+    update_drug_status,
+    add_transaction,
+    get_transactions,
 )
 
-BLOCKCHAIN_FILE = (
-    PROJECT_ROOT
-    / "Blockchain"
-    / "blockchain.py"
+from blockchain import (
+    blockchain_ready,
+    blockchain_connected,
+    blockchain_drug_exists,
+    manufacture_drug,
+    ship_drug,
+    receive_drug,
+    ship_to_hospital,
+    dispense_drug,
+    get_drug,
+    wallet_balance_eth,
+    CONTRACT_ADDRESS,
+    ACCOUNT_ADDRESS,
+    CONFIG_ERROR,
 )
-
-
-# ------------------------------------------------------------
-# CHECK FILES
-# ------------------------------------------------------------
-
-if not DATABASE_FILE.exists():
-
-    st.error(
-        f"Database file not found:\n{DATABASE_FILE}"
-    )
-
-    st.stop()
-
-
-if not BLOCKCHAIN_FILE.exists():
-
-    st.error(
-        f"Blockchain file not found:\n{BLOCKCHAIN_FILE}"
-    )
-
-    st.stop()
-
-
-# ------------------------------------------------------------
-# LOAD DATABASE.PY
-# ------------------------------------------------------------
-
-try:
-
-    database_spec = importlib.util.spec_from_file_location(
-        "pharmachain_database",
-        DATABASE_FILE
-    )
-
-    database = importlib.util.module_from_spec(
-        database_spec
-    )
-
-    database_spec.loader.exec_module(
-        database
-    )
-
-except Exception as e:
-
-    st.error(
-        "Unable to load database.py"
-    )
-
-    st.code(str(e))
-
-    st.stop()
-
-
-# ------------------------------------------------------------
-# DATABASE FUNCTIONS
-# ------------------------------------------------------------
-
-create_database = database.create_database
-add_drug = database.add_drug
-add_transaction = database.add_transaction
-db_drug_exists = database.drug_exists
-db_get_drug = database.get_drug
-update_drug = database.update_drug
-get_transactions = database.get_transactions
-
-
-# ------------------------------------------------------------
-# LOAD BLOCKCHAIN.PY
-# ------------------------------------------------------------
-
-try:
-
-    blockchain_spec = importlib.util.spec_from_file_location(
-        "pharmachain_blockchain",
-        BLOCKCHAIN_FILE
-    )
-
-    blockchain = importlib.util.module_from_spec(
-        blockchain_spec
-    )
-
-    blockchain_spec.loader.exec_module(
-        blockchain
-    )
-
-except Exception as e:
-
-    st.error(
-        "Unable to load blockchain.py"
-    )
-
-    st.code(str(e))
-
-    st.stop()
-
-
-# ------------------------------------------------------------
-# BLOCKCHAIN FUNCTIONS
-# ------------------------------------------------------------
-
-blockchain_connected = blockchain.blockchain_connected
-blockchain_drug_exists = blockchain.blockchain_drug_exists
-
-manufacture_drug = blockchain.manufacture_drug
-get_drug = blockchain.get_drug
-ship_drug = blockchain.ship_drug
-receive_drug = blockchain.receive_drug
-ship_to_hospital = blockchain.ship_to_hospital
-hospital_receive_drug = blockchain.hospital_receive_drug
-dispense_drug = blockchain.dispense_drug
-
-CONTRACT_ADDRESS = blockchain.CONTRACT_ADDRESS
-
-manufacturer = blockchain.manufacturer
-distributor = blockchain.distributor
-hospital = blockchain.hospital
-
-get_status_name = blockchain.get_status_name
-
-# ============================================================
-# DATABASE INITIALIZATION
-# ============================================================
-
-try:
-    create_database()
-except Exception as e:
-    st.error("Database initialization failed.")
-    st.code(str(e))
-    st.stop()
-
-
-# ============================================================
-# PAGE CONFIGURATION
-# ============================================================
 
 st.set_page_config(
     page_title="PharmaChain",
     page_icon="💊",
     layout="wide",
-    initial_sidebar_state="expanded"
 )
 
-
-# ============================================================
-# CUSTOM HEADER
-# ============================================================
+create_database()
 
 st.title("💊 PharmaChain")
+st.caption("Blockchain-Based Drug Tracking System")
 
-st.caption(
-    "Blockchain-Based Pharmaceutical Supply Chain Tracking System"
-)
+if blockchain_ready() and blockchain_connected():
+    st.sidebar.success("🟢 Ethereum Sepolia Connected")
+    st.sidebar.caption(f"Wallet: {ACCOUNT_ADDRESS[:8]}...{ACCOUNT_ADDRESS[-6:]}")
+    st.sidebar.caption(f"Balance: {wallet_balance_eth():.6f} ETH")
+elif CONFIG_ERROR:
+    st.sidebar.error("🔴 Blockchain Not Ready")
+else:
+    st.sidebar.error("🔴 Blockchain Disconnected")
 
-st.divider()
-
-
-# ============================================================
-# SIDEBAR
-# ============================================================
-
-st.sidebar.title("PharmaChain")
-
-st.sidebar.write(
-    "Supply Chain Management"
-)
-
-st.sidebar.divider()
-
-menu = st.sidebar.selectbox(
+st.sidebar.title("📋 Navigation")
+menu = st.sidebar.radio(
     "Select Module",
     [
-        "Dashboard",
         "Register Drug",
-        "Supply Chain",
-        "Verify Drug"
-    ]
-)
-
-st.sidebar.divider()
-
-st.sidebar.subheader("System Status")
-
-if blockchain_connected():
-
-    st.sidebar.success("Blockchain Connected")
-
-else:
-
-    st.sidebar.error("Blockchain Disconnected")
-
-
-st.sidebar.write(
-    "Contract:"
-)
-
-st.sidebar.code(
-    CONTRACT_ADDRESS
+        "Verify Drug",
+        "Drug Lifecycle",
+    ],
 )
 
 
-# ============================================================
-# HELPER FUNCTIONS
-# ============================================================
-
-def format_timestamp(timestamp):
-    """
-    Convert Unix timestamp to readable date/time.
-    """
-
-    try:
-
-        timestamp = int(timestamp)
-
-        if timestamp == 0:
-            return "Not recorded"
-
-        return datetime.fromtimestamp(
-            timestamp
-        ).strftime("%d-%m-%Y %H:%M:%S")
-
-    except Exception:
-
-        return "Unknown"
-
-
-def shorten_address(address):
-    """
-    Shorten blockchain address for display.
-    """
-
-    if not address:
-        return "N/A"
-
-    address = str(address)
-
-    if len(address) <= 15:
-        return address
-
-    return address[:8] + "..." + address[-6:]
-
-
-def generate_qr_code(data):
-    """
-    Generate QR code and return image bytes.
-    """
-
-    qr = qrcode.QRCode(
-        version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_M,
-        box_size=10,
-        border=4
-    )
-
-    qr.add_data(data)
-    qr.make(fit=True)
-
-    image = qr.make_image(
-        fill_color="black",
-        back_color="white"
-    )
-
-    buffer = BytesIO()
-
-    image.save(
-        buffer,
-        format="PNG"
-    )
-
-    buffer.seek(0)
-
-    return buffer
-
-
-def display_blockchain_drug(drug):
-    """
-    Display blockchain drug information.
-    """
-
-    st.subheader("Blockchain Drug Record")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-
-        st.metric(
-            "Drug ID",
-            drug[0]
-        )
-
-        st.write("**Drug Name**")
-        st.write(drug[2])
-
-        st.write("**Batch ID**")
-        st.write(drug[1])
-
-        st.write("**Manufacturer**")
-        st.write(drug[3])
-
-    with col2:
-
-        st.metric(
-            "Quantity",
-            str(drug[4])
-        )
-
-        st.write("**Manufacturing Date**")
-        st.write(
-            format_timestamp(drug[5])
-        )
-
-        st.write("**Expiry Date**")
-        st.write(
-            format_timestamp(drug[6])
-        )
-
-    with col3:
-
-        st.metric(
-            "Status",
-            get_status_name(drug[11])
-        )
-
-        st.write("**Manufacturer Wallet**")
-        st.code(
-            shorten_address(drug[9])
-        )
-
-        st.write("**Current Owner**")
-        st.code(
-            shorten_address(drug[10])
-        )
-
-    st.divider()
-
-    st.subheader("Blockchain Timestamps")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-
-        st.write("**Shipping Date**")
-
-        st.write(
-            format_timestamp(drug[7])
-        )
-
-    with col2:
-
-        st.write("**Receiving Date**")
-
-        st.write(
-            format_timestamp(drug[8])
-        )
-
-
-def display_transaction_history(drug_id):
-    """
-    Display SQLite transaction history.
-    """
-
-    st.subheader("Transaction History")
-
-    try:
-
-        transactions = get_transactions(
-            drug_id
-        )
-
-    except Exception as e:
-
-        st.error(
-            "Unable to load transaction history."
-        )
-
-        st.code(str(e))
-
-        return
-
-    if not transactions:
-
-        st.info(
-            "No transaction history found."
-        )
-
-        return
-
-    for transaction in transactions:
-
-        transaction_id = transaction[0]
-        action = transaction[2]
-        sender = transaction[3]
-        receiver = transaction[4]
-        timestamp = transaction[5]
-        block_number = transaction[6]
-        transaction_hash = transaction[7]
-
-        with st.container(border=True):
-
-            col1, col2, col3 = st.columns(3)
-
-            with col1:
-
-                st.write(
-                    f"### {action}"
-                )
-
-                st.write(
-                    f"Transaction ID: {transaction_id}"
-                )
-
-            with col2:
-
-                st.write(
-                    "**Sender**"
-                )
-
-                st.code(
-                    shorten_address(sender)
-                )
-
-                st.write(
-                    "**Receiver**"
-                )
-
-                if receiver == "PATIENT":
-
-                    st.write("Patient")
-
-                else:
-
-                    st.code(
-                        shorten_address(receiver)
-                    )
-
-            with col3:
-
-                st.write(
-                    "**Block Number**"
-                )
-
-                st.write(
-                    block_number
-                )
-
-                st.write(
-                    "**Timestamp**"
-                )
-
-                st.write(
-                    timestamp
-                )
-
-            if transaction_hash:
-
-                st.write(
-                    "**Transaction Hash**"
-                )
-
-                st.code(
-                    transaction_hash
-                )
-
-
-# ============================================================
-# DASHBOARD
-# ============================================================
-
-if menu == "Dashboard":
-
-    st.header("Dashboard")
-
-    st.write(
-        "Welcome to PharmaChain."
-    )
-
-    st.write(
-        "A blockchain-based system for tracking "
-        "pharmaceutical drugs through the supply chain."
-    )
-
-    st.divider()
-
-    # --------------------------------------------------------
-    # SYSTEM INFORMATION
-    # --------------------------------------------------------
-
-    st.subheader("System Information")
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-
-        if blockchain_connected():
-
-            st.metric(
-                "Blockchain",
-                "Connected"
-            )
-
-        else:
-
-            st.metric(
-                "Blockchain",
-                "Disconnected"
-            )
-
-    with col2:
-
-        st.metric(
-            "Chain ID",
-            "31337"
-        )
-
-    with col3:
-
-        st.metric(
-            "Manufacturer",
-            shorten_address(manufacturer)
-        )
-
-    with col4:
-
-        st.metric(
-            "Hospital",
-            shorten_address(hospital)
-        )
-
-    st.divider()
-
-    # --------------------------------------------------------
-    # SUPPLY CHAIN
-    # --------------------------------------------------------
-
-    st.subheader("Drug Supply Chain")
-
-    st.markdown(
-        """
-        ### Manufacturer
-        Drug is manufactured and registered on the blockchain.
-
-        ↓
-
-        ### Distributor
-        Manufacturer ships the drug to the distributor.
-
-        ↓
-
-        ### Distributor Receipt
-        Distributor confirms that the shipment has arrived.
-
-        ↓
-
-        ### Hospital
-        Distributor ships the drug to the hospital.
-
-        ↓
-
-        ### Hospital Receipt
-        Hospital confirms the shipment.
-
-        ↓
-
-        ### Patient
-        Hospital dispenses the drug to the patient.
-        """
-    )
-
-    st.divider()
-
+def show_config_error():
+    st.error("Blockchain configuration is incomplete.")
+    if CONFIG_ERROR:
+        st.code(CONFIG_ERROR)
     st.info(
-        "Every blockchain operation produces a transaction "
-        "hash and block number that can be verified."
+        "For local testing use .env. For Streamlit Cloud use App Settings → Secrets. "
+        "Never commit your private key."
     )
 
 
-# ============================================================
-# REGISTER DRUG
-# ============================================================
+def make_qr(drug_id):
+    qr = qrcode.QRCode(version=1, box_size=10, border=5)
+    qr.add_data(drug_id)
+    qr.make(fit=True)
+    image = qr.make_image(fill_color="black", back_color="white")
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
-elif menu == "Register Drug":
 
-    st.header("Register New Drug")
+def status_name(status):
+    names = {
+        0: "Manufactured",
+        1: "Shipped",
+        2: "Received",
+        3: "Dispensed",
+    }
+    return names.get(int(status), str(status))
 
-    st.write(
-        "Register a pharmaceutical product on the "
-        "PharmaChain blockchain."
-    )
 
-    st.divider()
+def timestamp_text(timestamp):
+    if int(timestamp) <= 0:
+        return "Not recorded"
+    return datetime.fromtimestamp(int(timestamp)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+if menu == "Register Drug":
+    st.header("💊 Register New Drug")
+    st.write("Register a drug on Ethereum Sepolia and generate its QR code.")
 
     with st.form("register_drug_form"):
-
         col1, col2 = st.columns(2)
-
         with col1:
-
-            drug_name = st.text_input(
-                "Drug Name",
-                placeholder="Example: Paracetamol 500mg"
-            )
-
-            batch_number = st.text_input(
-                "Batch Number",
-                placeholder="Example: BATCH001"
-            )
-
-            manufacturer_name = st.text_input(
-                "Manufacturer Company",
-                placeholder="Example: ABC Pharmaceuticals"
-            )
-
+            drug_name = st.text_input("Drug Name", placeholder="Example: Paracetamol")
         with col2:
+            batch_number = st.text_input("Batch Number", placeholder="Example: PAA2")
 
-            quantity = st.number_input(
-                "Quantity",
-                min_value=1,
-                value=100,
-                step=1
-            )
+        col3, col4 = st.columns(2)
+        with col3:
+            manufacturer = st.text_input("Manufacturer", placeholder="Example: ABC Pharma")
+        with col4:
+            quantity = st.number_input("Quantity", min_value=1, value=100, step=1)
 
-            manufacturing_date = st.date_input(
-                "Manufacturing Date"
-            )
+        col5, col6 = st.columns(2)
+        with col5:
+            manufacturing_date = st.date_input("Manufacturing Date", value=date.today())
+        with col6:
+            expiry_date = st.date_input("Expiry Date", value=date.today())
 
-            expiry_date = st.date_input(
-                "Expiry Date"
-            )
-
-        st.divider()
-
-        submitted = st.form_submit_button(
-            "Register Drug",
-            use_container_width=True
-        )
+        submitted = st.form_submit_button("🚀 Register Drug", use_container_width=True)
 
     if submitted:
-
-        # ----------------------------------------------------
-        # VALIDATION
-        # ----------------------------------------------------
-
-        if not drug_name.strip():
-
-            st.error(
-                "Please enter the drug name."
-            )
-
+        if not blockchain_connected():
+            show_config_error()
             st.stop()
-
-        if not batch_number.strip():
-
-            st.error(
-                "Please enter the batch number."
-            )
-
+        if not drug_name.strip() or not batch_number.strip() or not manufacturer.strip():
+            st.error("Drug name, batch number and manufacturer are required.")
             st.stop()
-
-        if not manufacturer_name.strip():
-
-            st.error(
-                "Please enter the manufacturer company name."
-            )
-
-            st.stop()
-
         if expiry_date <= manufacturing_date:
-
-            st.error(
-                "Expiry date must be after manufacturing date."
-            )
-
+            st.error("Expiry date must be after manufacturing date.")
             st.stop()
 
-        # ----------------------------------------------------
-        # CREATE DRUG ID
-        # ----------------------------------------------------
+        drug_id = f"DRG-{manufacturing_date.year}-{batch_number.upper().strip()}"
 
-        drug_id = (
-            f"DRG-{manufacturing_date.year}-"
-            f"{batch_number.upper().strip()}"
-        )
-
-        st.info(
-            f"Generated Drug ID: {drug_id}"
-        )
-
-        # ----------------------------------------------------
-        # CHECK SQLITE
-        # ----------------------------------------------------
-
-        try:
-
-            if db_drug_exists(drug_id):
-
-                st.error(
-                    "This drug already exists in the database."
-                )
-
-                st.stop()
-
-        except Exception as e:
-
-            st.error(
-                "Database check failed."
-            )
-
-            st.code(str(e))
-
+        if drug_exists(drug_id):
+            st.error(f"Drug ID {drug_id} already exists in the local database.")
+            st.stop()
+        if blockchain_drug_exists(drug_id):
+            st.error(f"Drug ID {drug_id} already exists on Ethereum Sepolia.")
             st.stop()
 
-        # ----------------------------------------------------
-        # CHECK BLOCKCHAIN
-        # ----------------------------------------------------
-
         try:
-
-            if blockchain_drug_exists(drug_id):
-
-                st.error(
-                    "This drug already exists on the blockchain."
-                )
-
-                st.stop()
-
-        except Exception as e:
-
-            st.error(
-                "Blockchain check failed."
-            )
-
-            st.code(str(e))
-
-            st.stop()
-
-        # ----------------------------------------------------
-        # BLOCKCHAIN REGISTRATION
-        # ----------------------------------------------------
-
-        try:
-
-            with st.spinner(
-                "Registering drug on blockchain..."
-            ):
-
-                blockchain_result = manufacture_drug(
+            with st.spinner("Recording drug on Ethereum Sepolia..."):
+                result = manufacture_drug(
                     drug_id=drug_id,
                     batch_id=batch_number.strip(),
                     drug_name=drug_name.strip(),
-                    manufacturer_name=manufacturer_name.strip(),
+                    manufacturer_name=manufacturer.strip(),
                     quantity=int(quantity),
-                    manufacturing_date=manufacturing_date,
-                    expiry_date=expiry_date
+                    manufacturing_date=manufacturing_date.strftime("%Y-%m-%d"),
+                    expiry_date=expiry_date.strftime("%Y-%m-%d"),
                 )
 
-        except Exception as e:
+            tx_hash = result["transaction_hash"]
+            block_number = result["block_number"]
+            sender = result["sender"]
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            qr_data = drug_id
 
-            st.error(
-                "Blockchain registration failed."
-            )
-
-            st.code(str(e))
-
-            st.stop()
-
-        # ----------------------------------------------------
-        # SAVE TO SQLITE
-        # ----------------------------------------------------
-
-        try:
             add_drug(
                 drug_id=drug_id,
                 drug_name=drug_name.strip(),
                 batch_number=batch_number.strip(),
-                manufacturing_date=str(
-                    manufacturing_date
-                ),
-                expiry_date=str(
-                expiry_date
-                ),
+                manufacturing_date=manufacturing_date.strftime("%Y-%m-%d"),
+                expiry_date=expiry_date.strftime("%Y-%m-%d"),
                 quantity=int(quantity),
-                manufacturer=manufacturer_name.strip(),
-                qr_data=drug_id
+                manufacturer=manufacturer.strip(),
+                current_owner=sender,
+                status="Manufactured",
+                qr_data=qr_data,
+                created_at=now,
             )
-
-        except Exception as e:
-
-            st.error(
-                "Blockchain transaction succeeded, "
-                "but database storage failed."
-            )
-
-            st.code(str(e))
-
-            st.warning(
-                "Transaction Hash:"
-            )
-
-            st.code(
-                blockchain_result["transaction_hash"]
-            )
-
-            st.stop()
-
-        # ----------------------------------------------------
-        # SAVE TRANSACTION
-        # ----------------------------------------------------
-
-        try:
-
             add_transaction(
                 drug_id=drug_id,
-                action="MANUFACTURE",
-                sender=blockchain_result["sender"],
-                receiver=blockchain_result.get(
-                    "receiver",
-                    blockchain_result["sender"]
-                ),
-                block_number=blockchain_result[
-                    "block_number"
-                ],
-                transaction_hash=blockchain_result[
-                    "transaction_hash"
-                ]
+                action="Manufactured",
+                sender=sender,
+                receiver=sender,
+                timestamp=now,
+                block_number=block_number,
+                transaction_hash=tx_hash,
             )
 
-        except Exception as e:
+            st.success("✅ Drug registered successfully!")
+            st.write(f"**Drug ID:** {drug_id}")
+            st.write(f"**Transaction Hash:** `{tx_hash}`")
+            st.write(f"**Block Number:** {block_number}")
+            st.write(f"**Contract:** `{CONTRACT_ADDRESS}`")
 
-            st.warning(
-                "Drug saved successfully, but transaction "
-                "history could not be saved."
-            )
-
-            st.code(str(e))
-
-        # ----------------------------------------------------
-        # GENERATE QR CODE
-        # ----------------------------------------------------
-
-        qr_image = generate_qr_code(
-            drug_id
-        )
-
-        # ----------------------------------------------------
-        # SUCCESS
-        # ----------------------------------------------------
-
-        st.success(
-            "Drug successfully registered!"
-        )
-
-        st.divider()
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-
-            st.subheader(
-                "Drug Information"
-            )
-
-            st.write(
-                "**Drug ID:**",
-                drug_id
-            )
-
-            st.write(
-                "**Drug Name:**",
-                drug_name
-            )
-
-            st.write(
-                "**Batch Number:**",
-                batch_number
-            )
-
-            st.write(
-                "**Quantity:**",
-                quantity
-            )
-
-            st.write(
-                "**Manufacturer:**",
-                manufacturer_name
-            )
-
-            st.write(
-                "**Status:**",
-                "MANUFACTURED"
-            )
-
-        with col2:
-
-            st.subheader(
-                "Drug QR Code"
-            )
-
-            st.image(
-                qr_image,
-                width=250
-            )
-
-            st.download_button(
-                label="Download QR Code",
-                data=qr_image,
-                file_name=f"{drug_id}.png",
-                mime="image/png"
-            )
-
-        st.divider()
-
-        st.subheader(
-            "Blockchain Transaction"
-        )
-
-        st.write(
-            "**Block Number:**",
-            blockchain_result["block_number"]
-        )
-
-        st.write(
-            "**Transaction Hash:**"
-        )
-
-        st.code(
-            blockchain_result["transaction_hash"]
-        )
-
-
-# ============================================================
-# SUPPLY CHAIN
-# ============================================================
-
-elif menu == "Supply Chain":
-
-    st.header("Drug Supply Chain")
-
-    st.write(
-        "Move a drug through each stage of the "
-        "pharmaceutical supply chain."
-    )
-
-    st.divider()
-
-    drug_id = st.text_input(
-        "Enter Drug ID",
-        placeholder="Example: DRG-2026-BATCH001"
-    ).strip()
-
-    if drug_id:
-
-        # ----------------------------------------------------
-        # CHECK BLOCKCHAIN
-        # ----------------------------------------------------
-
-        try:
-
-            if not blockchain_drug_exists(drug_id):
-
-                st.error(
-                    "Drug does not exist on the blockchain."
+            qr_bytes = make_qr(drug_id)
+            qr_col1, qr_col2 = st.columns(2)
+            with qr_col1:
+                st.image(qr_bytes, caption=drug_id, width=300)
+            with qr_col2:
+                st.code(qr_data)
+                st.download_button(
+                    "⬇️ Download QR Code",
+                    data=qr_bytes,
+                    file_name=f"{drug_id}.png",
+                    mime="image/png",
+                    use_container_width=True,
                 )
 
-                st.stop()
+        except Exception as exc:
+            st.error("❌ Drug registration failed.")
+            st.exception(exc)
 
-        except Exception as e:
-
-            st.error(
-                "Unable to check blockchain."
-            )
-
-            st.code(str(e))
-
-            st.stop()
-
-        # ----------------------------------------------------
-        # GET BLOCKCHAIN RECORD
-        # ----------------------------------------------------
-
-        try:
-
-            drug = get_drug(
-                drug_id
-            )
-
-        except Exception as e:
-
-            st.error(
-                "Unable to retrieve drug from blockchain."
-            )
-
-            st.code(str(e))
-
-            st.stop()
-
-        status = int(drug[11])
-        current_owner = drug[10]
-
-        # ----------------------------------------------------
-        # DISPLAY BASIC INFORMATION
-        # ----------------------------------------------------
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-
-            st.write("**Drug ID**")
-            st.write(drug[0])
-
-        with col2:
-
-            st.write("**Drug Name**")
-            st.write(drug[2])
-
-        with col3:
-
-            st.write("**Current Status**")
-
-            status_name = get_status_name(
-                status
-            )
-
-            if status_name == "MANUFACTURED":
-
-                st.info(status_name)
-
-            elif status_name == "SHIPPED":
-
-                st.warning(status_name)
-
-            elif status_name == "RECEIVED":
-
-                st.success(status_name)
-
-            elif status_name == "DISPENSED":
-
-                st.success(status_name)
-
-        st.divider()
-
-        # ----------------------------------------------------
-        # CURRENT OWNER
-        # ----------------------------------------------------
-
-        st.write(
-            "**Current Owner Wallet:**"
-        )
-
-        st.code(
-            current_owner
-        )
-
-        st.divider()
-
-        # ====================================================
-        # STAGE 1
-        # MANUFACTURER → DISTRIBUTOR
-        # ====================================================
-
-        if (
-            status == 0
-            and current_owner.lower()
-            == manufacturer.lower()
-        ):
-
-            st.subheader(
-                "Stage 1 — Ship to Distributor"
-            )
-
-            st.write(
-                "The manufacturer can now ship this "
-                "drug to the distributor."
-            )
-
-            if st.button(
-                "Ship to Distributor",
-                use_container_width=True
-            ):
-
-                try:
-
-                    with st.spinner(
-                        "Processing blockchain transaction..."
-                    ):
-
-                        result = ship_drug(
-                            drug_id=drug_id,
-                            receiver_address=distributor,
-                            sender_address=manufacturer
-                        )
-
-                    update_drug(
-                        drug_id,
-                        current_owner=distributor,
-                        status="SHIPPED"
-                    )
-
-                    add_transaction(
-                        drug_id=drug_id,
-                        action="SHIP_TO_DISTRIBUTOR",
-                        sender=result["sender"],
-                        receiver=result["receiver"],
-                        block_number=result[
-                            "block_number"
-                        ],
-                        transaction_hash=result[
-                            "transaction_hash"
-                        ]
-                    )
-
-                    st.success(
-                        "Drug shipped to distributor."
-                    )
-
-                    st.write(
-                        "**Transaction Hash:**"
-                    )
-
-                    st.code(
-                        result["transaction_hash"]
-                    )
-
-                    st.rerun()
-
-                except Exception as e:
-
-                    st.error(
-                        "Shipment failed."
-                    )
-
-                    st.code(str(e))
-
-
-        # ====================================================
-        # STAGE 2
-        # DISTRIBUTOR RECEIVES
-        # ====================================================
-
-        elif (
-            status == 1
-            and current_owner.lower()
-            == distributor.lower()
-        ):
-
-            st.subheader(
-                "Stage 2 — Distributor Receives Drug"
-            )
-
-            st.write(
-                "The distributor must confirm receipt "
-                "before shipping the drug to the hospital."
-            )
-
-            if st.button(
-                "Distributor Receive",
-                use_container_width=True
-            ):
-
-                try:
-
-                    with st.spinner(
-                        "Confirming receipt on blockchain..."
-                    ):
-
-                        result = receive_drug(
-                            drug_id=drug_id,
-                            receiver_address=distributor
-                        )
-
-                    update_drug(
-                        drug_id,
-                        current_owner=distributor,
-                        status="RECEIVED"
-                    )
-
-                    add_transaction(
-                        drug_id=drug_id,
-                        action="DISTRIBUTOR_RECEIVE",
-                        sender=distributor,
-                        receiver=distributor,
-                        block_number=result[
-                            "block_number"
-                        ],
-                        transaction_hash=result[
-                            "transaction_hash"
-                        ]
-                    )
-
-                    st.success(
-                        "Distributor received the drug."
-                    )
-
-                    st.code(
-                        result["transaction_hash"]
-                    )
-
-                    st.rerun()
-
-                except Exception as e:
-
-                    st.error(
-                        "Receiving transaction failed."
-                    )
-
-                    st.code(str(e))
-
-
-        # ====================================================
-        # STAGE 3
-        # DISTRIBUTOR → HOSPITAL
-        # ====================================================
-
-        elif (
-            status == 2
-            and current_owner.lower()
-            == distributor.lower()
-        ):
-
-            st.subheader(
-                "Stage 3 — Ship to Hospital"
-            )
-
-            st.write(
-                "The distributor can now ship the drug "
-                "to the hospital."
-            )
-
-            if st.button(
-                "Ship to Hospital",
-                use_container_width=True
-            ):
-
-                try:
-
-                    with st.spinner(
-                        "Processing hospital shipment..."
-                    ):
-
-                        result = ship_to_hospital(
-                            drug_id=drug_id,
-                            hospital_address=hospital,
-                            distributor_address=distributor
-                        )
-
-                    update_drug(
-                        drug_id,
-                        current_owner=hospital,
-                        status="SHIPPED"
-                    )
-
-                    add_transaction(
-                        drug_id=drug_id,
-                        action="SHIP_TO_HOSPITAL",
-                        sender=result["sender"],
-                        receiver=result["receiver"],
-                        block_number=result[
-                            "block_number"
-                        ],
-                        transaction_hash=result[
-                            "transaction_hash"
-                        ]
-                    )
-
-                    st.success(
-                        "Drug shipped to hospital."
-                    )
-
-                    st.code(
-                        result["transaction_hash"]
-                    )
-
-                    st.rerun()
-
-                except Exception as e:
-
-                    st.error(
-                        "Hospital shipment failed."
-                    )
-
-                    st.code(str(e))
-
-        # STAGE 4
-        # HOSPITAL RECEIVES
-        # ====================================================
-        elif (
-            status == 1
-            and current_owner.lower()
-            == hospital.lower()
-        ):
-            st.subheader(
-                "Stage 4 — Hospital Receives Drug"
-            )
-
-            st.write(
-                "The hospital must confirm receipt "
-                "of the shipment."
-            )
-
-            if st.button(
-                "Hospital Receive",
-                use_container_width=True
-            ):
-
-                try:
-
-                    with st.spinner(
-                        "Confirming hospital receipt..."
-                    ):
-
-                        result = hospital_receive_drug(
-                            drug_id=drug_id,
-                            hospital_address=hospital
-                        )
-
-                    update_drug(
-                        drug_id,
-                        current_owner=hospital,
-                        status="RECEIVED"
-                    )
-
-                    add_transaction(
-                        drug_id=drug_id,
-                        action="HOSPITAL_RECEIVE",
-                        sender=hospital,
-                        receiver=hospital,
-                        block_number=result[
-                            "block_number"
-                        ],
-                        transaction_hash=result[
-                            "transaction_hash"
-                        ]
-                    )
-
-                    st.success(
-                        "Hospital received the drug."
-                    )
-
-                    st.code(
-                        result["transaction_hash"]
-                    )
-
-                    st.rerun()
-
-                except Exception as e:
-
-                    st.error(
-                        "Hospital receiving failed."
-                    )
-
-                    st.code(str(e))
-
-
-        # ====================================================
-        # STAGE 5
-        # HOSPITAL → PATIENT
-        # ====================================================
-
-        elif (
-            status == 2
-            and current_owner.lower()
-            == hospital.lower()
-        ):
-
-            st.subheader(
-                "Stage 5 — Dispense to Patient"
-            )
-
-            st.write(
-                "The hospital can now dispense the "
-                "drug to the patient."
-            )
-
-            if st.button(
-                "Dispense to Patient",
-                use_container_width=True
-            ):
-
-                try:
-
-                    with st.spinner(
-                        "Recording dispensing transaction..."
-                    ):
-
-                        result = dispense_drug(
-                            drug_id=drug_id,
-                            hospital_address=hospital
-                        )
-
-                    update_drug(
-                        drug_id,
-                        current_owner=hospital,
-                        status="DISPENSED"
-                    )
-
-                    add_transaction(
-                        drug_id=drug_id,
-                        action="DISPENSE_TO_PATIENT",
-                        sender=hospital,
-                        receiver="PATIENT",
-                        block_number=result[
-                            "block_number"
-                        ],
-                        transaction_hash=result[
-                            "transaction_hash"
-                        ]
-                    )
-
-                    st.success(
-                        "Drug dispensed to patient successfully."
-                    )
-
-                    st.code(
-                        result["transaction_hash"]
-                    )
-
-                    st.rerun()
-
-                except Exception as e:
-
-                    st.error(
-                        "Dispensing transaction failed."
-                    )
-
-                    st.code(str(e))
-
-
-        # ====================================================
-        # COMPLETED
-        # ====================================================
-
-        elif status == 3:
-
-            st.success(
-                "Supply chain completed. "
-                "This drug has been dispensed to the patient."
-            )
-
-            st.balloons()
-
-
-        # ====================================================
-        # UNEXPECTED STATE
-        # ====================================================
-
-        else:
-
-            st.warning(
-                "No action is currently available "
-                "for this drug."
-            )
-
-
-# ============================================================
-# VERIFY DRUG
-# ============================================================
 
 elif menu == "Verify Drug":
+    st.header("🔍 Verify Drug")
+    st.write("Enter a Drug ID to read its record directly from the blockchain.")
 
-    st.header("Verify Drug")
+    drug_id = st.text_input("Drug ID", placeholder="Example: DRG-2026-PAA2").strip()
 
-    st.write(
-        "Verify the authenticity and complete history "
-        "of a pharmaceutical drug."
-    )
+    if st.button("🔍 Verify Drug", use_container_width=True):
+        if not drug_id:
+            st.warning("Please enter a Drug ID.")
+            st.stop()
+        if not blockchain_connected():
+            show_config_error()
+            st.stop()
+
+        try:
+            if not blockchain_drug_exists(drug_id):
+                st.error("❌ Drug not found on Ethereum Sepolia.")
+                st.stop()
+
+            drug = get_drug(drug_id)
+            (
+                returned_drug_id,
+                batch_id,
+                returned_drug_name,
+                manufacturer_name,
+                quantity,
+                manufacturing_timestamp,
+                expiry_timestamp,
+                shipping_timestamp,
+                receiving_timestamp,
+                manufacturer_address,
+                current_owner,
+                status,
+                exists,
+            ) = drug
+
+            st.success("✅ Drug verified successfully!")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**Drug ID:** {returned_drug_id}")
+                st.write(f"**Drug Name:** {returned_drug_name}")
+                st.write(f"**Batch ID:** {batch_id}")
+                st.write(f"**Manufacturer:** {manufacturer_name}")
+                st.write(f"**Quantity:** {quantity}")
+                st.write(f"**Status:** {status_name(status)}")
+            with col2:
+                st.write(f"**Manufacturing Date:** {timestamp_text(manufacturing_timestamp)}")
+                st.write(f"**Expiry Date:** {timestamp_text(expiry_timestamp)}")
+                st.write(f"**Shipping Date:** {timestamp_text(shipping_timestamp)}")
+                st.write(f"**Receiving Date:** {timestamp_text(receiving_timestamp)}")
+                st.write(f"**Manufacturer Address:** {manufacturer_address}")
+                st.write(f"**Current Owner:** {current_owner}")
+
+            st.subheader("⛓️ Blockchain")
+            st.code(CONTRACT_ADDRESS)
+
+            if drug_exists(drug_id):
+                st.success("The drug also exists in the local SQLite database.")
+            else:
+                st.warning("The drug exists on-chain but is not in the local SQLite database.")
+
+            history = get_transactions(drug_id)
+            if history:
+                st.subheader("🧾 Local Transaction History")
+                st.dataframe(
+                    [
+                        {
+                            "Action": row[0],
+                            "Sender": row[1],
+                            "Receiver": row[2],
+                            "Timestamp": row[3],
+                            "Block": row[4],
+                            "Transaction Hash": row[5],
+                        }
+                        for row in history
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+        except Exception as exc:
+            st.error("❌ Verification failed.")
+            st.exception(exc)
+
+
+elif menu == "Drug Lifecycle":
+    st.header("🔄 Drug Lifecycle")
+    st.write("Perform shipment and ownership transitions using the connected Sepolia wallet.")
+
+    if not blockchain_connected():
+        show_config_error()
+        st.stop()
+
+    drug_id = st.text_input("Drug ID", placeholder="Example: DRG-2026-PAA2").strip()
+
+    if drug_id and st.button("Load Drug", use_container_width=True):
+        try:
+            if not blockchain_drug_exists(drug_id):
+                st.error("Drug does not exist on the blockchain.")
+            else:
+                drug = get_drug(drug_id)
+                st.info(f"Current blockchain status: **{status_name(drug[11])}**")
+                st.write(f"Current owner: `{drug[10]}`")
+        except Exception as exc:
+            st.error("Could not load drug.")
+            st.exception(exc)
 
     st.divider()
 
-    drug_id = st.text_input(
-        "Enter Drug ID",
-        placeholder="Example: DRG-2026-BATCH001"
-    ).strip()
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📦 Ship to Distributor",
+        "📥 Receive",
+        "🏥 Ship to Hospital",
+        "💊 Dispense",
+    ])
 
-    if st.button(
-        "Verify Drug",
-        use_container_width=True
-    ):
-
-        if not drug_id:
-
-            st.error(
-                "Please enter a Drug ID."
-            )
-
-            st.stop()
-
-        # ----------------------------------------------------
-        # BLOCKCHAIN CHECK
-        # ----------------------------------------------------
-
-        try:
-
-            blockchain_exists = (
-                blockchain_drug_exists(
-                    drug_id
-                )
-            )
-
-        except Exception as e:
-
-            st.error(
-                "Blockchain verification failed."
-            )
-
-            st.code(str(e))
-
-            st.stop()
-
-        # ----------------------------------------------------
-        # DATABASE CHECK
-        # ----------------------------------------------------
-
-        try:
-
-            database_exists = (
-                db_drug_exists(
-                    drug_id
-                )
-            )
-
-        except Exception:
-
-            database_exists = False
-
-        # ----------------------------------------------------
-        # BOTH EXIST
-        # ----------------------------------------------------
-
-        if blockchain_exists:
-
-            st.success(
-                "✓ Drug verified on blockchain."
-            )
-
-            if database_exists:
-
-                st.success(
-                    "✓ Drug found in local database."
-                )
-
-            else:
-
-                st.warning(
-                    "Drug exists on blockchain but "
-                    "was not found in the local database."
-                )
-
-            # ------------------------------------------------
-            # GET BLOCKCHAIN DATA
-            # ------------------------------------------------
-
+    with tab1:
+        distributor = st.text_input("Distributor wallet address", key="distributor")
+        if st.button("Ship Drug", key="ship_button", use_container_width=True):
             try:
-
-                drug = get_drug(
-                    drug_id
+                result = ship_drug(drug_id, distributor.strip())
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                update_drug_status(drug_id, result["receiver"], "Shipped")
+                add_transaction(
+                    drug_id, "Shipped", result["sender"], result["receiver"],
+                    now, result["block_number"], result["transaction_hash"]
                 )
+                st.success("Drug shipped successfully.")
+                st.code(result["transaction_hash"])
+            except Exception as exc:
+                st.error("Shipment failed.")
+                st.exception(exc)
 
-            except Exception as e:
-
-                st.error(
-                    "Unable to retrieve blockchain record."
-                )
-
-                st.code(str(e))
-
-                st.stop()
-
-            st.divider()
-
-            display_blockchain_drug(
-                drug
-            )
-
-            # ------------------------------------------------
-            # VERIFICATION STATUS
-            # ------------------------------------------------
-
-            st.divider()
-
-            st.subheader(
-                "Authenticity Status"
-            )
-
-            if database_exists:
-
-                st.success(
-                    "AUTHENTIC — Blockchain and database records exist."
-                )
-
-            else:
-
-                st.warning(
-                    "BLOCKCHAIN VERIFIED — Local database record missing."
-                )
-
-            # ------------------------------------------------
-            # TRANSACTION HISTORY
-            # ------------------------------------------------
-
-            st.divider()
-
-            display_transaction_history(
-                drug_id
-            )
-
-            # ------------------------------------------------
-            # CONTRACT
-            # ------------------------------------------------
-
-            st.divider()
-
-            st.subheader(
-                "Smart Contract"
-            )
-
-            st.write(
-                "Contract Address:"
-            )
-
-            st.code(
-                CONTRACT_ADDRESS
-            )
-
-        # ----------------------------------------------------
-        # ONLY DATABASE
-        # ----------------------------------------------------
-
-        elif database_exists:
-            st.warning(
-                "Drug exists in the local database "
-                "but could not be verified on blockchain."
-            )
+    with tab2:
+        if st.button("Receive Drug", key="receive_button", use_container_width=True):
             try:
-
-                db_record = db_get_drug(
-                    drug_id
+                result = receive_drug(drug_id)
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                update_drug_status(drug_id, result["sender"], "Received")
+                add_transaction(
+                    drug_id, "Received", result["sender"], result["sender"],
+                    now, result["block_number"], result["transaction_hash"]
                 )
+                st.success("Drug received successfully.")
+                st.code(result["transaction_hash"])
+            except Exception as exc:
+                st.error("Receive operation failed.")
+                st.exception(exc)
 
-                st.subheader(
-                    "Local Database Record"
+    with tab3:
+        hospital = st.text_input("Hospital wallet address", key="hospital")
+        if st.button("Ship to Hospital", key="hospital_button", use_container_width=True):
+            try:
+                result = ship_to_hospital(drug_id, hospital.strip())
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                update_drug_status(drug_id, result["receiver"], "Shipped")
+                add_transaction(
+                    drug_id, "Shipped to Hospital", result["sender"], result["receiver"],
+                    now, result["block_number"], result["transaction_hash"]
                 )
+                st.success("Drug shipped to hospital successfully.")
+                st.code(result["transaction_hash"])
+            except Exception as exc:
+                st.error("Hospital shipment failed.")
+                st.exception(exc)
 
-                st.write(
-                    db_record
+    with tab4:
+        if st.button("Dispense Drug", key="dispense_button", use_container_width=True):
+            try:
+                result = dispense_drug(drug_id)
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                update_drug_status(drug_id, result["sender"], "Dispensed")
+                add_transaction(
+                    drug_id, "Dispensed", result["sender"], result["sender"],
+                    now, result["block_number"], result["transaction_hash"]
                 )
-
-            except Exception as e:
-
-                st.code(str(e))
-
-        else:
-            st.error(
-                "Drug not found."
-            )
-            st.write(
-                "No matching drug was found in "
-                "the blockchain or database."
-            )
-# ============================================================
-# FOOTER
-# ============================================================
-st.divider()
-st.caption(
-    "PharmaChain | Blockchain-Based Pharmaceutical "
-    "Supply Chain Tracking System"
-)
+                st.success("Drug dispensed successfully.")
+                st.code(result["transaction_hash"])
+            except Exception as exc:
+                st.error("Dispense operation failed.")
+                st.exception(exc)
